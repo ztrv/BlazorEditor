@@ -128,9 +128,17 @@
 .grip {
     cursor: grab;
     color: var(--rule);
-    padding: 0 2px;
+    padding: 2px 4px;
     user-select: none;
+    -webkit-user-select: none;
     letter-spacing: -2px;
+    border-radius: 4px;
+    touch-action: none;
+}
+
+.grip:hover {
+    color: var(--accent);
+    background: var(--accent-soft);
 }
 
 .grip:active {
@@ -222,7 +230,7 @@
 /* ---------- drop lines ---------- */
 
 .gap {
-    height: 10px;
+    height: 14px;
     margin-left: calc(var(--depth) * 22px);
     display: flex;
     align-items: center;

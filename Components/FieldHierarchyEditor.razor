@@ -25,7 +25,7 @@
 
     <div class="fhe-body">
 
-        <div class="tree" @ondragend="ClearDrag">
+        <div class="tree" data-fhe-tree @ondragend="ClearDrag">
 
             @if (_roots.Count == 0)
             {
@@ -53,17 +53,17 @@
                 <div @key="current"
                      class="@RowClass(current)"
                      style="--depth:@depth"
-                     draggable="@DraggableAttr(current)"
-                     @ondragstart="() => StartDrag(current)"
+                     data-fhe-row="@current.Key"
                      @ondragover:preventDefault="true"
                      @ondragenter="() => HoverInto(current)"
                      @ondrop:preventDefault="true"
                      @ondrop="() => DropInto(current)">
 
                     <span class="grip"
+                          draggable="true"
+                          data-fhe-handle
                           title="Drag to move. Drop on a row to nest inside it, drop on a line to place between."
-                          @onmousedown="() => Arm(current)"
-                          @onmouseup="Disarm">⣿</span>
+                          @ondragstart="() => StartDrag(current)">⣿</span>
 
                     @if (current.Children.Count > 0)
                     {
@@ -251,7 +251,6 @@
     private FieldNode? _into;
     private FieldNode? _gapBefore;
     private bool _gapTail;
-    private Guid? _armed;   // only the row whose grip is held becomes draggable
 
     protected override void OnParametersSet()
     {
@@ -302,10 +301,6 @@
         _ => "tag was",
     };
 
-    private void Arm(FieldNode n) => _armed = n.Key;
-
-    private void Disarm() => _armed = null;
-
     private void AddRoot() => AddNode(null);
 
     private void AddChild(FieldNode parent) => AddNode(parent);
@@ -317,8 +312,6 @@
     private static string TwistGlyph(FieldNode n) => n.Expanded ? "▾" : "▸";
 
     private static string TwistTitle(FieldNode n) => n.Expanded ? "Collapse" : "Expand";
-
-    private string DraggableAttr(FieldNode n) => _armed == n.Key ? "true" : "false";
 
     private string RowClass(FieldNode n)
     {
@@ -348,7 +341,7 @@
         }
     }
 
-    private List<FieldNode> SiblingsOf(FieldNode n) => n.Parent?.Children ?? _roots;
+    private List<FieldNode> SiblingsOf(FieldNode n) => FieldTree.SiblingsOf(_roots, n);
 
     // ---------- editing ----------
 
@@ -403,38 +396,12 @@
 
     private void Indent(FieldNode node)
     {
-        var siblings = SiblingsOf(node);
-        var i = siblings.IndexOf(node);
-        if (i <= 0) return;
-        var newParent = siblings[i - 1];
-        newParent.Expanded = true;
-        MoveTo(node, newParent, newParent.Children.Count);
+        if (FieldTree.Indent(_roots, node)) Changed();
     }
 
     private void Outdent(FieldNode node)
     {
-        var parent = node.Parent;
-        if (parent is null) return;
-        var grandSiblings = parent.Parent?.Children ?? _roots;
-        MoveTo(node, parent.Parent, grandSiblings.IndexOf(parent) + 1);
-    }
-
-    private void MoveTo(FieldNode node, FieldNode? newParent, int index)
-    {
-        if (!FieldTree.CanReparent(node, newParent)) return;
-
-        var from = SiblingsOf(node);
-        var to = newParent?.Children ?? _roots;
-        var oldIndex = from.IndexOf(node);
-        if (oldIndex < 0) return;
-
-        from.RemoveAt(oldIndex);
-        if (ReferenceEquals(from, to) && oldIndex < index) index--;
-
-        index = Math.Clamp(index, 0, to.Count);
-        to.Insert(index, node);
-        node.Parent = newParent;
-        Changed();
+        if (FieldTree.Outdent(_roots, node)) Changed();
     }
 
     // ---------- drag and drop ----------
@@ -474,28 +441,20 @@
     /// <summary>Dropped on the line above a row: becomes that row's sibling, just before it.</summary>
     private void DropBefore(FieldNode target)
     {
-        if (_dragging is not null && FieldTree.CanReparent(_dragging, target.Parent))
-        {
-            var siblings = target.Parent?.Children ?? _roots;
-            MoveTo(_dragging, target.Parent, siblings.IndexOf(target));
-        }
+        if (_dragging is not null && FieldTree.DropBefore(_roots, _dragging, target)) Changed();
         ClearDrag();
     }
 
     /// <summary>Dropped on a row: becomes the last child of that row.</summary>
     private void DropInto(FieldNode target)
     {
-        if (_dragging is not null && FieldTree.CanReparent(_dragging, target))
-        {
-            target.Expanded = true;
-            MoveTo(_dragging, target, target.Children.Count);
-        }
+        if (_dragging is not null && FieldTree.DropInto(_roots, _dragging, target)) Changed();
         ClearDrag();
     }
 
     private void DropAtEnd()
     {
-        if (_dragging is not null) MoveTo(_dragging, null, _roots.Count);
+        if (_dragging is not null && FieldTree.Move(_roots, _dragging, null, _roots.Count)) Changed();
         ClearDrag();
     }
 
@@ -505,7 +464,6 @@
         _into = null;
         _gapBefore = null;
         _gapTail = false;
-        _armed = null;
     }
 
     // ---------- validation and output ----------

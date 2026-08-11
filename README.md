@@ -184,14 +184,23 @@ change set is still measured against the original load.
 To append to the end of a nested group, drop onto the group row itself. Dropping a node into
 its own descendant is rejected in `FieldTree.CanReparent`, so cycles can't be created.
 
-The drag handle only sets `draggable="true"` on mousedown. Without that, a permanently
-draggable row blocks caret placement and text selection inside the row's own inputs in
-Firefox. Arming on mousedown works because the browser doesn't check `draggable` until the
-pointer has moved a few pixels, by which point Blazor has re-rendered.
+Only the grip is draggable, permanently. The row itself is not, which is what keeps caret
+placement and text selection working inside the row's inputs — a permanently draggable row
+breaks both in Firefox.
+
+`wwwroot/js/fieldDrag.js` supplies the three things HTML5 drag needs that Blazor cannot
+reach, because `DragEventArgs` is a serialized snapshot rather than the live event:
+
+- `dataTransfer.setData()` during `dragstart`. Firefox silently cancels any drag without it.
+- `effectAllowed` / `dropEffect`, so the pointer shows a move cursor rather than "no drop".
+- `preventDefault` on `dragover`, which is what makes an element a valid drop target. Doing
+  it in JS keeps it client-side instead of a server round trip per pointer move.
+
+The shim never touches classes or attributes Blazor owns; all placement logic stays in C#.
 
 HTML5 drag events don't fire on touch devices, so every row also carries `↑ ↓ → ←` buttons
-that perform the same four moves. Those are keyboard reachable, which keeps the whole editor
-usable without a mouse.
+that perform the same four moves, through the same `FieldTree` methods. Those are keyboard
+reachable, which keeps the editor usable without a mouse.
 
 ## Validation
 
@@ -220,11 +229,13 @@ BlazorEditor/
 ├── Models/
 │   ├── Field.cs                         persisted record + field-type catalog
 │   ├── FieldNode.cs                     working node, computed FullId
-│   ├── FieldTree.cs                     Build / Flatten / CanReparent
+│   ├── FieldTree.cs                     Build / Flatten / move + drop placement
 │   ├── FieldChanges.cs                  FieldChangeSet — diff against the baseline
 │   └── SampleForms.cs                   demo definition
 ├── Services/FormDesignerState.cs        carries a definition into the editor
-├── wwwroot/app.css
+├── wwwroot/
+│   ├── app.css
+│   └── js/fieldDrag.js                  dataTransfer plumbing for HTML5 drag
 └── Program.cs
 ```
 
