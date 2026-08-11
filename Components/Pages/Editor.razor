@@ -1,0 +1,114 @@
+@page "/"
+@using System.Text.Json
+@inject FormDesignerState State
+
+<PageTitle>Form field editor</PageTitle>
+
+<header class="masthead">
+    <div>
+        <h1>Form field editor</h1>
+        <p class="sub">
+            Drag a row onto another row to nest it inside. Drag it onto the line between rows to
+            place it at that level. Ids are 3&ndash;5 characters and only need to be unique among
+            their siblings.
+        </p>
+    </div>
+    <div class="masthead-actions">
+        <button type="button" class="lbtn" @onclick="() => _loadOpen = !_loadOpen">
+            @(_loadOpen ? "Close" : "Load a definition")
+        </button>
+    </div>
+</header>
+
+@if (_loadOpen)
+{
+    <section class="loader">
+        <div class="loader-head">
+            <h2>Load a definition</h2>
+            <div class="loader-actions">
+                <button type="button" class="lbtn" @onclick="LoadSample">Load sample</button>
+                <button type="button" class="lbtn" @onclick="StartBlank">Start blank</button>
+                <button type="button" class="lbtn primary" @onclick="LoadPastedJson">Load this JSON</button>
+            </div>
+        </div>
+        <textarea class="loader-input" rows="8" spellcheck="false"
+                  placeholder='[{"id":"cust","fullId":"cust","parentId":"","name":"Customer","sortOrder":0,"fieldType":"G"}]'
+                  @bind="_json" @bind:event="oninput"></textarea>
+        @if (_loadError is not null)
+        {
+            <p class="loader-msg bad">@_loadError</p>
+        }
+    </section>
+}
+
+<FieldHierarchyEditor @key="_editorKey" Fields="_incoming" OnSave="HandleSave" />
+
+@if (_savedAt is not null)
+{
+    <p class="saved">Saved @_savedAt.Value.ToString("t") &mdash; @_savedCount fields.</p>
+}
+
+@code {
+    private IEnumerable<Field>? _incoming;
+    private Guid _editorKey = Guid.NewGuid();
+
+    private bool _loadOpen;
+    private string _json = string.Empty;
+    private string? _loadError;
+
+    private DateTime? _savedAt;
+    private int _savedCount;
+
+    protected override void OnInitialized()
+    {
+        // Null unless something called State.Load, which is what makes the app open blank.
+        _incoming = State.Fields;
+    }
+
+    private void LoadSample() => Apply(SampleForms.CustomerOrder());
+
+    private void StartBlank()
+    {
+        State.Clear();
+        Apply(null);
+    }
+
+    private void LoadPastedJson()
+    {
+        if (string.IsNullOrWhiteSpace(_json))
+        {
+            _loadError = "Paste a JSON array of fields first.";
+            return;
+        }
+
+        try
+        {
+            State.LoadJson(_json);
+            Apply(State.Fields);
+        }
+        catch (JsonException ex)
+        {
+            _loadError = $"That JSON couldn't be read: {ex.Message}";
+        }
+    }
+
+    private void Apply(IEnumerable<Field>? fields)
+    {
+        if (fields is not null) State.Load(fields);
+
+        _incoming = State.Fields;
+        _editorKey = Guid.NewGuid();   // forces the editor to rebuild its tree
+        _loadError = null;
+        _loadOpen = false;
+    }
+
+    private void HandleSave(List<Field> fields)
+    {
+        State.Save(fields);
+        _savedAt = DateTime.Now;
+        _savedCount = fields.Count;
+
+        // Persist to your own store here, e.g.:
+        //     await Repository.SaveFormAsync(fields);
+    }
+}

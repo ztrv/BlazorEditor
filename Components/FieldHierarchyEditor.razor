@@ -1,0 +1,458 @@
+@using BlazorEditor.Models
+@using System.Text.Json
+
+<section class="fhe">
+
+    <header class="fhe-bar">
+        <div class="fhe-bar-left">
+            <button type="button" class="btn primary" @onclick="AddRoot">Add field</button>
+            <button type="button" class="btn" @onclick="ExpandAll">Expand all</button>
+            <button type="button" class="btn" @onclick="CollapseAll">Collapse all</button>
+        </div>
+        <div class="fhe-bar-right">
+            <span class="count">@TotalCount fields</span>
+            @if (HasErrors)
+            {
+                <span class="pill bad">@ErrorCount to fix</span>
+            }
+            <button type="button" class="btn primary" disabled="@HasErrors" @onclick="SaveAsync">Save</button>
+        </div>
+    </header>
+
+    <div class="fhe-body">
+
+        <div class="tree" @ondragend="ClearDrag">
+
+            @if (_roots.Count == 0)
+            {
+                <div class="empty">
+                    <p>No fields yet.</p>
+                    <button type="button" class="btn primary" @onclick="AddRoot">Add the first field</button>
+                </div>
+            }
+
+            @foreach (var node in Visible())
+            {
+                var current = node;
+                var depth = current.Depth;
+
+                <div @key="current.Key"
+                     class="@GapClass(current)"
+                     style="--depth:@depth"
+                     @ondragover:preventDefault="true"
+                     @ondragenter="() => HoverGap(current)"
+                     @ondrop:preventDefault="true"
+                     @ondrop="() => DropBefore(current)">
+                    <span class="gap-line"></span>
+                </div>
+
+                <div @key="current"
+                     class="@RowClass(current)"
+                     style="--depth:@depth"
+                     draggable="@DraggableAttr(current)"
+                     @ondragstart="() => StartDrag(current)"
+                     @ondragover:preventDefault="true"
+                     @ondragenter="() => HoverInto(current)"
+                     @ondrop:preventDefault="true"
+                     @ondrop="() => DropInto(current)">
+
+                    <span class="grip"
+                          title="Drag to move. Drop on a row to nest inside it, drop on a line to place between."
+                          @onmousedown="() => Arm(current)"
+                          @onmouseup="Disarm">⣿</span>
+
+                    @if (current.Children.Count > 0)
+                    {
+                        <button type="button" class="twist" title="@TwistTitle(current)"
+                                @onclick="() => Toggle(current)">@TwistGlyph(current)</button>
+                    }
+                    else
+                    {
+                        <span class="twist leaf">·</span>
+                    }
+
+                    <input class="in id" maxlength="5" placeholder="id" aria-label="Field id"
+                           @bind="current.Id" @bind:event="oninput" @bind:after="Changed" />
+
+                    <input class="in name" placeholder="Field name" aria-label="Field name"
+                           @bind="current.Name" @bind:event="oninput" @bind:after="Changed" />
+
+                    <select class="in type" aria-label="Field type"
+                            value="@current.FieldType"
+                            @onchange="e => SetType(current, e.Value?.ToString())">
+                        @foreach (var t in FieldTypeCatalog.All)
+                        {
+                            <option value="@t.Code">@t.Label</option>
+                        }
+                    </select>
+
+                    <code class="path" title="FullId">@PathLabel(current)</code>
+
+                    @if (Validate(current) is string err)
+                    {
+                        <span class="warn" title="@err">@err</span>
+                    }
+
+                    <span class="tools">
+                        <button type="button" class="btn icon" title="Add child"
+                                @onclick="() => AddChild(current)">+</button>
+                        <button type="button" class="btn icon" title="Move up"
+                                @onclick="() => Nudge(current, -1)">↑</button>
+                        <button type="button" class="btn icon" title="Move down"
+                                @onclick="() => Nudge(current, 1)">↓</button>
+                        <button type="button" class="btn icon" title="Nest under previous field"
+                                @onclick="() => Indent(current)">→</button>
+                        <button type="button" class="btn icon" title="Move out one level"
+                                @onclick="() => Outdent(current)">←</button>
+                        <button type="button" class="btn icon danger" title="Remove field and everything inside it"
+                                @onclick="() => Remove(current)">✕</button>
+                    </span>
+                </div>
+            }
+
+            <div class="@TailClass"
+                 style="--depth:0"
+                 @ondragover:preventDefault="true"
+                 @ondragenter="HoverTail"
+                 @ondrop:preventDefault="true"
+                 @ondrop="DropAtEnd">
+                <span class="gap-line"></span>
+            </div>
+        </div>
+
+        <aside class="out">
+            <div class="out-head">
+                <h2>Saved shape</h2>
+                <button type="button" class="btn" @onclick="ToggleView">@ViewToggleLabel</button>
+            </div>
+
+            @if (_showJson)
+            {
+                <pre class="json">@Json()</pre>
+            }
+            else
+            {
+                <table class="grid">
+                    <thead>
+                        <tr>
+                            <th>FullId</th>
+                            <th>ParentId</th>
+                            <th>Id</th>
+                            <th>Sort</th>
+                            <th>Type</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var f in FieldTree.Flatten(_roots))
+                        {
+                            <tr>
+                                <td><code>@f.FullId</code></td>
+                                <td><code>@Dash(f.ParentId)</code></td>
+                                <td><code>@f.Id</code></td>
+                                <td>@f.SortOrder</td>
+                                <td>@f.FieldType</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        </aside>
+    </div>
+</section>
+
+@code {
+    /// <summary>Existing definition to edit. Pass null or an empty list to start from scratch.</summary>
+    [Parameter] public IEnumerable<Field>? Fields { get; set; }
+
+    /// <summary>Fires on every edit with the rebuilt flat list.</summary>
+    [Parameter] public EventCallback<List<Field>> FieldsChanged { get; set; }
+
+    /// <summary>Fires when Save is pressed and the definition is valid.</summary>
+    [Parameter] public EventCallback<List<Field>> OnSave { get; set; }
+
+    private List<FieldNode> _roots = new();
+    private IEnumerable<Field>? _boundTo;
+    private bool _showJson;
+
+    // drag state
+    private FieldNode? _dragging;
+    private FieldNode? _into;
+    private FieldNode? _gapBefore;
+    private bool _gapTail;
+    private Guid? _armed;   // only the row whose grip is held becomes draggable
+
+    protected override void OnParametersSet()
+    {
+        // Rebuild only when a different source list arrives, so edits survive re-renders.
+        if (!ReferenceEquals(_boundTo, Fields))
+        {
+            _boundTo = Fields;
+            _roots = FieldTree.Build(Fields);
+        }
+    }
+
+    // ---------- view helpers (kept out of markup to avoid Razor parsing traps) ----------
+
+    private int TotalCount => _roots.Sum(r => r.DescendantsAndSelf().Count());
+
+    private int ErrorCount => Errors().Count();
+
+    private bool HasErrors => Errors().Any();
+
+    private string ViewToggleLabel => _showJson ? "Table" : "JSON";
+
+    private string TailClass => _gapTail ? "gap tail on" : "gap tail";
+
+    private void ToggleView() => _showJson = !_showJson;
+
+    private void Toggle(FieldNode n) => n.Expanded = !n.Expanded;
+
+    private void Arm(FieldNode n) => _armed = n.Key;
+
+    private void Disarm() => _armed = null;
+
+    private void AddRoot() => AddNode(null);
+
+    private void AddChild(FieldNode parent) => AddNode(parent);
+
+    private static string Dash(string? s) => string.IsNullOrEmpty(s) ? "—" : s;
+
+    private static string PathLabel(FieldNode n) => Dash(n.FullId);
+
+    private static string TwistGlyph(FieldNode n) => n.Expanded ? "▾" : "▸";
+
+    private static string TwistTitle(FieldNode n) => n.Expanded ? "Collapse" : "Expand";
+
+    private string DraggableAttr(FieldNode n) => _armed == n.Key ? "true" : "false";
+
+    private string RowClass(FieldNode n)
+    {
+        var css = "row";
+        if (n.Depth == 0) css += " root";
+        if (ReferenceEquals(_dragging, n)) css += " dragging";
+        if (ReferenceEquals(_into, n)) css += " into";
+        if (Validate(n) is not null) css += " invalid";
+        return css;
+    }
+
+    private string GapClass(FieldNode n) => ReferenceEquals(_gapBefore, n) ? "gap on" : "gap";
+
+    private List<FieldNode> Visible()
+    {
+        var flat = new List<FieldNode>();
+        Walk(_roots);
+        return flat;
+
+        void Walk(IEnumerable<FieldNode> nodes)
+        {
+            foreach (var n in nodes)
+            {
+                flat.Add(n);
+                if (n.Expanded) Walk(n.Children);
+            }
+        }
+    }
+
+    private List<FieldNode> SiblingsOf(FieldNode n) => n.Parent?.Children ?? _roots;
+
+    // ---------- editing ----------
+
+    private void AddNode(FieldNode? parent)
+    {
+        var target = parent?.Children ?? _roots;
+        var node = new FieldNode
+        {
+            Id = NextId(target),
+            Name = "New field",
+            FieldType = 'T',
+            Parent = parent,
+        };
+        target.Add(node);
+        if (parent is not null) parent.Expanded = true;
+        Changed();
+    }
+
+    private static string NextId(List<FieldNode> siblings)
+    {
+        for (var i = 1; i < 999; i++)
+        {
+            var candidate = $"fld{i}";
+            if (!siblings.Any(s => string.Equals(s.Id, candidate, StringComparison.OrdinalIgnoreCase)))
+                return candidate;
+        }
+        return "fld";
+    }
+
+    private void Remove(FieldNode node)
+    {
+        SiblingsOf(node).Remove(node);
+        node.Parent = null;
+        Changed();
+    }
+
+    private void SetType(FieldNode node, string? value)
+    {
+        if (!string.IsNullOrEmpty(value)) node.FieldType = value[0];
+        Changed();
+    }
+
+    private void Nudge(FieldNode node, int delta)
+    {
+        var siblings = SiblingsOf(node);
+        var i = siblings.IndexOf(node);
+        var j = i + delta;
+        if (i < 0 || j < 0 || j >= siblings.Count) return;
+        (siblings[i], siblings[j]) = (siblings[j], siblings[i]);
+        Changed();
+    }
+
+    private void Indent(FieldNode node)
+    {
+        var siblings = SiblingsOf(node);
+        var i = siblings.IndexOf(node);
+        if (i <= 0) return;
+        var newParent = siblings[i - 1];
+        newParent.Expanded = true;
+        MoveTo(node, newParent, newParent.Children.Count);
+    }
+
+    private void Outdent(FieldNode node)
+    {
+        var parent = node.Parent;
+        if (parent is null) return;
+        var grandSiblings = parent.Parent?.Children ?? _roots;
+        MoveTo(node, parent.Parent, grandSiblings.IndexOf(parent) + 1);
+    }
+
+    private void MoveTo(FieldNode node, FieldNode? newParent, int index)
+    {
+        if (!FieldTree.CanReparent(node, newParent)) return;
+
+        var from = SiblingsOf(node);
+        var to = newParent?.Children ?? _roots;
+        var oldIndex = from.IndexOf(node);
+        if (oldIndex < 0) return;
+
+        from.RemoveAt(oldIndex);
+        if (ReferenceEquals(from, to) && oldIndex < index) index--;
+
+        index = Math.Clamp(index, 0, to.Count);
+        to.Insert(index, node);
+        node.Parent = newParent;
+        Changed();
+    }
+
+    // ---------- drag and drop ----------
+
+    private void StartDrag(FieldNode node)
+    {
+        _dragging = node;
+        _into = null;
+        _gapBefore = null;
+        _gapTail = false;
+    }
+
+    private void HoverGap(FieldNode node)
+    {
+        if (_dragging is null) return;
+        _into = null;
+        _gapTail = false;
+        _gapBefore = FieldTree.CanReparent(_dragging, node.Parent) ? node : null;
+    }
+
+    private void HoverInto(FieldNode node)
+    {
+        if (_dragging is null) return;
+        _gapBefore = null;
+        _gapTail = false;
+        _into = FieldTree.CanReparent(_dragging, node) ? node : null;
+    }
+
+    private void HoverTail()
+    {
+        if (_dragging is null) return;
+        _into = null;
+        _gapBefore = null;
+        _gapTail = true;
+    }
+
+    /// <summary>Dropped on the line above a row: becomes that row's sibling, just before it.</summary>
+    private void DropBefore(FieldNode target)
+    {
+        if (_dragging is not null && FieldTree.CanReparent(_dragging, target.Parent))
+        {
+            var siblings = target.Parent?.Children ?? _roots;
+            MoveTo(_dragging, target.Parent, siblings.IndexOf(target));
+        }
+        ClearDrag();
+    }
+
+    /// <summary>Dropped on a row: becomes the last child of that row.</summary>
+    private void DropInto(FieldNode target)
+    {
+        if (_dragging is not null && FieldTree.CanReparent(_dragging, target))
+        {
+            target.Expanded = true;
+            MoveTo(_dragging, target, target.Children.Count);
+        }
+        ClearDrag();
+    }
+
+    private void DropAtEnd()
+    {
+        if (_dragging is not null) MoveTo(_dragging, null, _roots.Count);
+        ClearDrag();
+    }
+
+    private void ClearDrag()
+    {
+        _dragging = null;
+        _into = null;
+        _gapBefore = null;
+        _gapTail = false;
+        _armed = null;
+    }
+
+    // ---------- validation and output ----------
+
+    private string? Validate(FieldNode n)
+    {
+        var id = n.Id ?? string.Empty;
+        if (id.Length == 0) return "Id required";
+        if (id.Contains(':')) return "Id cannot contain a colon";
+        if (id.Length < 3 || id.Length > 5) return "Id must be 3-5 characters";
+        if (SiblingsOf(n).Count(s => string.Equals(s.Id, id, StringComparison.OrdinalIgnoreCase)) > 1)
+            return "Another field at this level already uses this id";
+        return null;
+    }
+
+    private IEnumerable<FieldNode> Errors() =>
+        _roots.SelectMany(r => r.DescendantsAndSelf()).Where(n => Validate(n) is not null);
+
+    private void ExpandAll() => SetExpanded(true);
+
+    private void CollapseAll() => SetExpanded(false);
+
+    private void SetExpanded(bool value)
+    {
+        foreach (var n in _roots.SelectMany(r => r.DescendantsAndSelf())) n.Expanded = value;
+    }
+
+    private string Json() =>
+        JsonSerializer.Serialize(FieldTree.Flatten(_roots), new JsonSerializerOptions { WriteIndented = true });
+
+    private void Changed()
+    {
+        if (FieldsChanged.HasDelegate)
+        {
+            _ = FieldsChanged.InvokeAsync(FieldTree.Flatten(_roots));
+        }
+        StateHasChanged();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (HasErrors) return;
+        await OnSave.InvokeAsync(FieldTree.Flatten(_roots));
+    }
+}
