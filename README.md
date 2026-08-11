@@ -26,12 +26,13 @@ Requires the .NET 8 SDK. To move to .NET 9 or 10, change `<TargetFramework>` in
 ```csharp
 class Field
 {
-    string Id;         // 3-5 chars, unique only among siblings
-    string FullId;     // ParentId + ":" + Id, or just Id at the root
-    string ParentId;   // the parent's FullId, empty at the root
-    string Name;
-    int    SortOrder;  // zero-based position among siblings
-    char   FieldType;
+    string  Id;              // 3-5 chars, unique only among siblings
+    string  FullId;          // ParentId + ":" + Id, or just Id at the root
+    string  ParentId;        // the parent's FullId, empty at the root
+    string  Name;
+    int     SortOrder;       // zero-based position among siblings
+    char    FieldType;
+    string? OriginalFullId;  // FullId at load time; null for fields added since
 }
 ```
 
@@ -104,6 +105,74 @@ private async Task HandleSave(List<Field> fields)
 
 `FormDesignerState.Saved` also fires on every save if you'd rather subscribe than override.
 
+## Change tracking
+
+When a form is loaded, every field records the `FullId` it arrived with. That baseline
+survives all editing, so after renaming `addr` to `loc` the postcode field reports:
+
+```
+FullId          cust:loc:postc
+OriginalFullId  cust:addr:postc
+```
+
+Note that the *descendants* of a renamed field change path too, even though nobody touched
+them. That's the main reason to track originals rather than trying to infer changes after
+the fact.
+
+`Field.OriginalFullId` is null for fields added during the session, so `IsNew` and `HasMoved`
+distinguish the three states. The property is populated on the way out and isn't part of the
+form definition — use it to reconcile against what you have stored, then discard it.
+
+### Deletions
+
+A deleted field is absent from the saved list, so `OnSave` alone cannot tell you about it.
+`OnSaveChanges` compares the saved form against the load-time baseline and reports removals
+as well:
+
+```razor
+<FieldHierarchyEditor Fields="_fields" OnSaveChanges="Reconcile" />
+```
+
+```csharp
+private async Task Reconcile(FieldChangeSet changes)
+{
+    foreach (var (wasPath, nowPath) in changes.PathMap)
+        await Answers.RepathAsync(wasPath, nowPath);
+
+    foreach (var c in changes.Removed)
+        await Answers.DropAsync(c.OriginalFullId!);
+
+    foreach (var c in changes.Added)
+        await Answers.CreateAsync(c.Field!);
+}
+```
+
+Deleting a group reports the group *and* every descendant as removed, so nothing is orphaned.
+
+| Kind | Meaning |
+|---|---|
+| `Unchanged` | Existed at load time, still at the same path |
+| `Added` | Created during this session; `OriginalFullId` is null |
+| `Renamed` | Same parent, different id |
+| `Reparented` | Moved under a different parent |
+| `Removed` | Was in the baseline, isn't in the saved form; `Field` is null |
+
+`PathMap` maps original path to current path for everything that survived and moved — the
+map to replay against stored answers, validation rules, or anything else keyed by path.
+
+`FieldChangeSet.Compare(original, current)` is also callable directly, as long as `current`
+carries `OriginalFullId`. Comparing two plain lists can't tell a rename from a delete-plus-add.
+
+### Rebasing
+
+Loading always rebases: a field's original path is where it sat when it was handed to the
+editor, not where it sat in some earlier session. Any `OriginalFullId` already on an incoming
+field is ignored. So save, persist, reload, and the change set starts empty again.
+
+The baseline is captured when a *different* list instance arrives in `Fields` — the same
+moment the tree is rebuilt. Saving doesn't reset it, so you can save twice and the second
+change set is still measured against the original load.
+
 ## Drop semantics
 
 | Drop target | Result |
@@ -152,6 +221,7 @@ BlazorEditor/
 │   ├── Field.cs                         persisted record + field-type catalog
 │   ├── FieldNode.cs                     working node, computed FullId
 │   ├── FieldTree.cs                     Build / Flatten / CanReparent
+│   ├── FieldChanges.cs                  FieldChangeSet — diff against the baseline
 │   └── SampleForms.cs                   demo definition
 ├── Services/FormDesignerState.cs        carries a definition into the editor
 ├── wwwroot/app.css

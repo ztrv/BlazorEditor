@@ -41,11 +41,19 @@
     </section>
 }
 
-<FieldHierarchyEditor @key="_editorKey" Fields="_incoming" OnSave="HandleSave" />
+<FieldHierarchyEditor @key="_editorKey" Fields="_incoming"
+                      OnSave="HandleSave" OnSaveChanges="HandleChanges" />
 
 @if (_savedAt is not null)
 {
-    <p class="saved">Saved @_savedAt.Value.ToString("t") &mdash; @_savedCount fields.</p>
+    <p class="saved">Saved @_savedAt.Value.ToString("t") &mdash; @_savedCount fields. @_changeSummary</p>
+
+    @if (_removed.Count > 0)
+    {
+        <p class="saved removed">
+            No longer in the form: @string.Join(", ", _removed)
+        </p>
+    }
 }
 
 @code {
@@ -58,6 +66,22 @@
 
     private DateTime? _savedAt;
     private int _savedCount;
+    private string _changeSummary = string.Empty;
+    private List<string> _removed = new();
+
+    private void HandleChanges(FieldChangeSet changes)
+    {
+        _removed = changes.Removed.Select(c => c.OriginalFullId!).ToList();
+
+        _changeSummary = changes.HasChanges
+            ? $"{changes.Added.Count} added, {changes.Renamed.Count} renamed, " +
+              $"{changes.Reparented.Count} moved, {changes.Removed.Count} removed."
+            : "No changes since the form was loaded.";
+
+        // changes.PathMap gives originalFullId -> currentFullId for everything that moved,
+        // which is what you replay against stored answers keyed by path:
+        //     foreach (var (was, now) in changes.PathMap) await Answers.RepathAsync(was, now);
+    }
 
     protected override void OnInitialized()
     {

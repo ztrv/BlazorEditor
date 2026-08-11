@@ -12,6 +12,22 @@ public sealed class FieldNode
     public string Name { get; set; } = string.Empty;
     public char FieldType { get; set; } = 'T';
 
+    /// <summary>
+    /// The path this node had when the form was loaded, captured before any editing.
+    /// Null when the node was added during this session.
+    /// </summary>
+    /// <remarks>
+    /// Unlike <see cref="FullId"/> this is a stored value, deliberately. It is the one
+    /// thing that must not follow the node when it moves.
+    /// </remarks>
+    public string? OriginalFullId { get; init; }
+
+    public bool IsNew => OriginalFullId is null;
+
+    public bool PathChanged =>
+        OriginalFullId is not null &&
+        !string.Equals(OriginalFullId, FullId, StringComparison.OrdinalIgnoreCase);
+
     public bool Expanded { get; set; } = true;
 
     public FieldNode? Parent { get; set; }

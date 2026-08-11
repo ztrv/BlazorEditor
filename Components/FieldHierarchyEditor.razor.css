@@ -380,3 +380,83 @@
         transition: none !important;
     }
 }
+
+/* ---------- change tracking ---------- */
+
+.tag {
+    font-size: 11px;
+    letter-spacing: .02em;
+    padding: 2px 7px;
+    border-radius: 999px;
+    white-space: nowrap;
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+}
+
+.tag.new {
+    background: #e6f4ea;
+    color: #1c6b3a;
+}
+
+.tag.was {
+    background: #eef0fb;
+    color: var(--accent);
+}
+
+.tag.gone {
+    background: #fbeaec;
+    color: var(--danger);
+    text-decoration: line-through;
+}
+
+.pill.chg {
+    background: var(--accent-soft);
+    color: var(--accent);
+}
+
+.grid code.was {
+    color: var(--accent);
+}
+
+.note {
+    color: var(--muted);
+    font-size: 13px;
+    margin: 4px 0 0;
+}
+
+/* ---------- segmented view switch ---------- */
+
+.seg {
+    display: inline-flex;
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.seg-btn {
+    font: inherit;
+    font-size: 12px;
+    padding: 4px 10px;
+    border: 0;
+    border-right: 1px solid var(--line);
+    background: #fff;
+    color: var(--muted);
+    cursor: pointer;
+}
+
+.seg-btn:last-child {
+    border-right: 0;
+}
+
+.seg-btn:hover {
+    color: var(--accent);
+}
+
+.seg-btn.on {
+    background: var(--accent);
+    color: #fff;
+}
+
+.seg-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}

@@ -22,6 +22,28 @@ public class Field
 
     public char FieldType { get; set; } = 'T';
 
+    /// <summary>
+    /// The <see cref="FullId"/> this field had when the form was loaded into the editor,
+    /// before any editing. Null for fields added during the session.
+    /// </summary>
+    /// <remarks>
+    /// Set by the editor on the way out. It is not part of the form definition itself, so
+    /// there is no need to persist it — use it to reconcile the edited form against what
+    /// you already have stored, then discard it.
+    /// </remarks>
+    public string? OriginalFullId { get; set; }
+
+    /// <summary>True when this field did not exist when the form was loaded.</summary>
+    public bool IsNew => OriginalFullId is null;
+
+    /// <summary>
+    /// True when the field existed at load time and its path has since changed, whether
+    /// through an id rename, a move to a different parent, or both.
+    /// </summary>
+    public bool HasMoved =>
+        OriginalFullId is not null &&
+        !string.Equals(OriginalFullId, FullId, StringComparison.OrdinalIgnoreCase);
+
     public Field Clone() => (Field)MemberwiseClone();
 
     public override string ToString() => $"{FullId} ({FieldType}) {Name}";

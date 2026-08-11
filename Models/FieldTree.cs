@@ -18,14 +18,20 @@ public static class FieldTree
 
         foreach (var f in source)
         {
+            var path = PathOf(f);
+
             var node = new FieldNode
             {
                 Id = f.Id ?? string.Empty,
                 Name = f.Name ?? string.Empty,
                 FieldType = f.FieldType == '\0' ? 'T' : f.FieldType,
+
+                // The baseline for this editing session. Loading always rebases: a field's
+                // original path is where it sat when it arrived, not where it sat in some
+                // earlier session. Anything already in f.OriginalFullId is ignored.
+                OriginalFullId = path,
             };
 
-            var path = PathOf(f);
             byPath[path] = node;
             pairs.Add((f, node, PathDepth(path)));
         }
@@ -72,6 +78,7 @@ public static class FieldTree
                     Name = n.Name,
                     SortOrder = order++,
                     FieldType = n.FieldType,
+                    OriginalFullId = n.OriginalFullId,
                 });
                 Walk(n.Children);
             }
@@ -82,7 +89,11 @@ public static class FieldTree
     public static bool CanReparent(FieldNode node, FieldNode? newParent) =>
         newParent is null || (!ReferenceEquals(node, newParent) && !node.IsAncestorOf(newParent));
 
-    private static string PathOf(Field f)
+    /// <summary>
+    /// The path a stored field represents. Prefers <see cref="Field.ParentId"/> + <see cref="Field.Id"/>,
+    /// falling back to <see cref="Field.FullId"/> when the parent path is empty.
+    /// </summary>
+    public static string PathOf(Field f)
     {
         if (!string.IsNullOrEmpty(f.ParentId)) return $"{f.ParentId}:{f.Id}";
         return string.IsNullOrEmpty(f.FullId) ? f.Id ?? string.Empty : f.FullId;

@@ -11,6 +11,10 @@
         </div>
         <div class="fhe-bar-right">
             <span class="count">@TotalCount fields</span>
+            @if (ChangeCount > 0)
+            {
+                <span class="pill chg">@ChangeCount changed</span>
+            }
             @if (HasErrors)
             {
                 <span class="pill bad">@ErrorCount to fix</span>
@@ -88,6 +92,15 @@
 
                     <code class="path" title="FullId">@PathLabel(current)</code>
 
+                    @if (current.IsNew && _baseline.Count > 0)
+                    {
+                        <span class="tag new" title="Added since the form was loaded">new</span>
+                    }
+                    else if (current.PathChanged)
+                    {
+                        <span class="tag was" title="@OriginalTitle(current)">was @current.OriginalFullId</span>
+                    }
+
                     @if (Validate(current) is string err)
                     {
                         <span class="warn" title="@err">@err</span>
@@ -122,13 +135,56 @@
 
         <aside class="out">
             <div class="out-head">
-                <h2>Saved shape</h2>
-                <button type="button" class="btn" @onclick="ToggleView">@ViewToggleLabel</button>
+                <h2>Result</h2>
+                <div class="seg" role="group" aria-label="Output view">
+                    <button type="button" class="@SegClass(OutputView.Fields)"
+                            @onclick="() => _view = OutputView.Fields">Fields</button>
+                    <button type="button" class="@SegClass(OutputView.Changes)"
+                            @onclick="() => _view = OutputView.Changes">Changes</button>
+                    <button type="button" class="@SegClass(OutputView.Json)"
+                            @onclick="() => _view = OutputView.Json">JSON</button>
+                </div>
             </div>
 
-            @if (_showJson)
+            @if (_view == OutputView.Json)
             {
                 <pre class="json">@Json()</pre>
+            }
+            else if (_view == OutputView.Changes)
+            {
+                var changes = Changes();
+
+                @if (_baseline.Count == 0)
+                {
+                    <p class="note">This form started empty, so every field is new.</p>
+                }
+
+                @if (!changes.HasChanges)
+                {
+                    <p class="note">Nothing has changed since the form was loaded.</p>
+                }
+                else
+                {
+                    <table class="grid">
+                        <thead>
+                            <tr>
+                                <th>Change</th>
+                                <th>Original FullId</th>
+                                <th>Current FullId</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var c in changes.All.Where(c => c.Kind != FieldChangeKind.Unchanged))
+                            {
+                                <tr>
+                                    <td><span class="@ChangeClass(c.Kind)">@ChangeLabel(c.Kind)</span></td>
+                                    <td><code>@Dash(c.OriginalFullId)</code></td>
+                                    <td><code>@Dash(c.CurrentFullId)</code></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
             }
             else
             {
@@ -136,8 +192,8 @@
                     <thead>
                         <tr>
                             <th>FullId</th>
+                            <th>Original FullId</th>
                             <th>ParentId</th>
-                            <th>Id</th>
                             <th>Sort</th>
                             <th>Type</th>
                         </tr>
@@ -147,8 +203,8 @@
                         {
                             <tr>
                                 <td><code>@f.FullId</code></td>
+                                <td><code class="@(f.HasMoved ? "was" : "")">@Dash(f.OriginalFullId)</code></td>
                                 <td><code>@Dash(f.ParentId)</code></td>
-                                <td><code>@f.Id</code></td>
                                 <td>@f.SortOrder</td>
                                 <td>@f.FieldType</td>
                             </tr>
@@ -168,11 +224,27 @@
     [Parameter] public EventCallback<List<Field>> FieldsChanged { get; set; }
 
     /// <summary>Fires when Save is pressed and the definition is valid.</summary>
+    /// <remarks>
+    /// Each field carries <see cref="Field.OriginalFullId"/>. Deleted fields cannot appear
+    /// here at all — use <see cref="OnSaveChanges"/> if you need to know about those.
+    /// </remarks>
     [Parameter] public EventCallback<List<Field>> OnSave { get; set; }
+
+    /// <summary>
+    /// Fires alongside <see cref="OnSave"/> with the form reconciled against how it was
+    /// loaded, including the fields that were removed.
+    /// </summary>
+    [Parameter] public EventCallback<FieldChangeSet> OnSaveChanges { get; set; }
+
+    private enum OutputView { Fields, Changes, Json }
 
     private List<FieldNode> _roots = new();
     private IEnumerable<Field>? _boundTo;
-    private bool _showJson;
+
+    /// <summary>The form exactly as it was handed to the editor. Never mutated.</summary>
+    private List<Field> _baseline = new();
+
+    private OutputView _view = OutputView.Fields;
 
     // drag state
     private FieldNode? _dragging;
@@ -184,12 +256,17 @@
     protected override void OnParametersSet()
     {
         // Rebuild only when a different source list arrives, so edits survive re-renders.
+        // This is also the moment the change-tracking baseline is captured.
         if (!ReferenceEquals(_boundTo, Fields))
         {
             _boundTo = Fields;
             _roots = FieldTree.Build(Fields);
+            _baseline = Fields?.Select(f => f.Clone()).ToList() ?? new List<Field>();
         }
     }
+
+    /// <summary>The current edit compared against the form as loaded.</summary>
+    public FieldChangeSet Changes() => FieldChangeSet.Compare(_baseline, FieldTree.Flatten(_roots));
 
     // ---------- view helpers (kept out of markup to avoid Razor parsing traps) ----------
 
@@ -199,13 +276,31 @@
 
     private bool HasErrors => Errors().Any();
 
-    private string ViewToggleLabel => _showJson ? "Table" : "JSON";
+    private int ChangeCount => Changes().ChangeCount;
 
     private string TailClass => _gapTail ? "gap tail on" : "gap tail";
 
-    private void ToggleView() => _showJson = !_showJson;
+    private string SegClass(OutputView v) => _view == v ? "seg-btn on" : "seg-btn";
 
     private void Toggle(FieldNode n) => n.Expanded = !n.Expanded;
+
+    private static string OriginalTitle(FieldNode n) => $"Loaded as {n.OriginalFullId}";
+
+    private static string ChangeLabel(FieldChangeKind k) => k switch
+    {
+        FieldChangeKind.Added => "added",
+        FieldChangeKind.Removed => "removed",
+        FieldChangeKind.Renamed => "renamed",
+        FieldChangeKind.Reparented => "moved",
+        _ => "unchanged",
+    };
+
+    private static string ChangeClass(FieldChangeKind k) => k switch
+    {
+        FieldChangeKind.Added => "tag new",
+        FieldChangeKind.Removed => "tag gone",
+        _ => "tag was",
+    };
 
     private void Arm(FieldNode n) => _armed = n.Key;
 
@@ -453,6 +548,9 @@
     private async Task SaveAsync()
     {
         if (HasErrors) return;
-        await OnSave.InvokeAsync(FieldTree.Flatten(_roots));
+
+        var fields = FieldTree.Flatten(_roots);
+        await OnSave.InvokeAsync(fields);
+        await OnSaveChanges.InvokeAsync(FieldChangeSet.Compare(_baseline, fields));
     }
 }
